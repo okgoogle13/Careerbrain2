@@ -1,0 +1,45 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "lastLoginAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "createdAt"]
+    },
+    "CareerDatabase": {
+      "title": "CareerDatabase",
+      "description": "The user's complete career database",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Owner UID" },
+        "Personal_Information": { "type": "object" },
+        "Career_Profile": { "type": "object" },
+        "Master_Skills_Inventory": { "type": "array" },
+        "Career_Entries": { "type": "array" },
+        "Structured_Achievements": { "type": "array" },
+        "KSC_Responses": { "type": "array" },
+        "Saved_Documents": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "Personal_Information", "Career_Profile", "Master_Skills_Inventory", "Career_Entries", "Structured_Achievements", "KSC_Responses"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles"
+    },
+    "/users/{userId}/careerDatabase/{docId}": {
+      "schema": { "$ref": "#/entities/CareerDatabase" },
+      "description": "User's career database (usually docId is 'main')"
+    }
+  }
+}

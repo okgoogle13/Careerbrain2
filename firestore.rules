@@ -1,0 +1,120 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required, immutable) - User's Firebase UID
+    //   - email: string (required) - User's email address
+    //   - displayName: string (optional) - User's display name
+    //   - photoURL: string (optional) - User's photo URL
+    //   - createdAt: timestamp (required, immutable) - Account creation time
+    //   - lastLoginAt: timestamp (optional) - Last login time
+    //
+    // Collection: users/{userId}/careerDatabase
+    // Document ID: {docId} (usually 'main')
+    // Fields:
+    //   - uid: string (required, immutable) - Owner's Firebase UID
+    //   - Personal_Information: map (required)
+    //   - Career_Profile: map (required)
+    //   - Master_Skills_Inventory: list (required)
+    //   - Career_Entries: list (required)
+    //   - Structured_Achievements: list (required)
+    //   - KSC_Responses: list (required)
+    //   - Saved_Documents: list (optional)
+    //   - updatedAt: timestamp (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function uidUnchanged() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == request.auth.uid;
+    }
+    
+    function uidNotModified() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == resource.data.uid;
+    }
+    
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+    
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isTimestamp(field) {
+      return request.resource.data[field] is timestamp;
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasRequiredFields(['uid', 'email', 'createdAt']) &&
+             data.uid is string && data.uid.size() > 0 && data.uid.size() < 100 &&
+             isValidEmail(data.email) &&
+             data.createdAt is timestamp &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100)) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 2000)) &&
+             (!('lastLoginAt' in data) || data.lastLoginAt is timestamp);
+    }
+
+    function isValidCareerDatabase(data) {
+      return hasRequiredFields(['uid', 'Personal_Information', 'Career_Profile', 'Master_Skills_Inventory', 'Career_Entries', 'Structured_Achievements', 'KSC_Responses']) &&
+             data.uid is string && data.uid.size() > 0 && data.uid.size() < 100 &&
+             data.Personal_Information is map &&
+             data.Career_Profile is map &&
+             data.Master_Skills_Inventory is list && data.Master_Skills_Inventory.size() <= 1000 &&
+             data.Career_Entries is list && data.Career_Entries.size() <= 500 &&
+             data.Structured_Achievements is list && data.Structured_Achievements.size() <= 1000 &&
+             data.KSC_Responses is list && data.KSC_Responses.size() <= 500 &&
+             (!('Saved_Documents' in data) || (data.Saved_Documents is list && data.Saved_Documents.size() <= 1000)) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && 
+                       isValidUser(request.resource.data) && 
+                       uidUnchanged();
+      allow update: if isOwner(userId) && 
+                       isValidUser(request.resource.data) && 
+                       uidNotModified() &&
+                       request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if isOwner(userId);
+      
+      match /careerDatabase/{docId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && 
+                         isValidCareerDatabase(request.resource.data) && 
+                         uidUnchanged();
+        allow update: if isOwner(userId) && 
+                         isValidCareerDatabase(request.resource.data) && 
+                         uidNotModified();
+        allow delete: if isOwner(userId);
+      }
+    }
+  }
+}
