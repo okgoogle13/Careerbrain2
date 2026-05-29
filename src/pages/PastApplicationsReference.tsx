@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { WorkspaceLayout } from "../components/layout/WorkspaceLayout";
 import { SolidarityPageLayout } from "../components/layout/SolidarityPageLayout";
@@ -17,9 +17,13 @@ import {
   ArrowRight,
   ChevronRight,
   Search,
-  MoreHorizontal
+  MoreHorizontal,
+  CheckSquare,
+  ListTodo,
+  Loader2
 } from "lucide-react";
 import { Placard, ScaffoldArea, ScaffoldInput } from "../components/ui/Primitives";
+import { calendarService } from "../services/calendarService";
 
 interface InterviewStage {
   id: string;
@@ -124,6 +128,118 @@ export function PastApplicationsReference() {
 
   const selectedApp = mockApplications.find(app => app.id === selectedId);
 
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [calendarSuccess, setCalendarSuccess] = useState<string | null>(null);
+
+  const [tasksLoading, setTasksLoading] = useState(false);
+  const [tasksSuccess, setTasksSuccess] = useState<string | null>(null);
+
+  const [emails, setEmails] = useState<any[]>([]);
+  const [gmailLoading, setGmailLoading] = useState(false);
+  const [gmailError, setGmailError] = useState<string | null>(null);
+
+  const fetchGmailUpdates = async () => {
+    setGmailLoading(true);
+    setGmailError(null);
+    try {
+      const tokens = JSON.parse(localStorage.getItem('google_tokens') || 'null');
+      const headers: HeadersInit = {};
+      if (tokens) {
+        headers['Authorization'] = `Bearer ${JSON.stringify(tokens)}`;
+      }
+      const res = await fetch("/api/gmail/latest", { headers });
+      if (res.status === 401) {
+        throw new Error("unauthorized");
+      }
+      if (!res.ok) {
+        throw new Error("Failed to scan application updates");
+      }
+      const data = await res.json();
+      setEmails(data.emails || []);
+    } catch (err: any) {
+      if (err.message === "unauthorized") {
+        setGmailError("Google Workspace Connection Required");
+      } else {
+        setGmailError(err.message || "An error occurred fetching Gmail");
+      }
+    } finally {
+      setGmailLoading(false);
+    }
+  };
+
+  const handleSyncToCalendar = async () => {
+    if (!selectedApp) return;
+    setCalendarLoading(true);
+    setCalendarSuccess(null);
+    try {
+      const tokens = JSON.parse(localStorage.getItem('google_tokens') || 'null');
+      const result = await calendarService.syncToCalendar({
+        title: selectedApp.role,
+        company: selectedApp.company,
+        deadline: selectedApp.date,
+        description: `Follow up application for ${selectedApp.role} at ${selectedApp.company}. Tracked via CareerCopilot.`
+      }, tokens);
+      if (result.success) {
+        setCalendarSuccess("Synced to Calendar!");
+        setTimeout(() => setCalendarSuccess(null), 3500);
+      } else {
+        alert("Failed to sync to Google Calendar.");
+      }
+    } catch (e) {
+      alert("Error syncing to calendar");
+    } finally {
+      setCalendarLoading(false);
+    }
+  };
+
+  const handleSyncToTasks = async () => {
+    if (!selectedApp) return;
+    setTasksLoading(true);
+    setTasksSuccess(null);
+    try {
+      const tokens = JSON.parse(localStorage.getItem('google_tokens') || 'null');
+      const result = await calendarService.syncToTasks({
+        title: `Follow up: ${selectedApp.company} - ${selectedApp.role}`,
+        notes: `Application path submitted on ${selectedApp.date}.`,
+        due: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() // 7 days from now
+      }, tokens);
+      if (result.success) {
+        setTasksSuccess("Added to Tasks!");
+        setTimeout(() => setTasksSuccess(null), 3500);
+      } else {
+        alert("Failed to add task.");
+      }
+    } catch (e) {
+      alert("Error creating Task");
+    } finally {
+      setTasksLoading(false);
+    }
+  };
+
+  const connectGoogle = async () => {
+    try {
+      const response = await fetch('/api/auth/google/url');
+      const { url } = await response.json();
+      const popup = window.open(url, 'Google OAuth', 'width=500,height=600');
+      const handleMessage = (event: MessageEvent) => {
+        if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
+          localStorage.setItem('google_tokens', JSON.stringify(event.data.tokens));
+          window.removeEventListener('message', handleMessage);
+          fetchGmailUpdates();
+        }
+      };
+      window.addEventListener('message', handleMessage);
+    } catch (err) {
+      alert("Failed to connect Google account");
+    }
+  };
+
+  useEffect(() => {
+    if (localStorage.getItem('google_tokens')) {
+      fetchGmailUpdates();
+    }
+  }, []);
+
   return (
     <SolidarityPageLayout>
       <WorkspaceLayout>
@@ -194,12 +310,64 @@ export function PastApplicationsReference() {
                       <section className="space-y-4">
                         <h3 className="text-[10px] font-bold text-[var(--sys-color-worker-ash-base)] uppercase tracking-[0.2em]">Quick Actions</h3>
                         <div className="grid grid-cols-1 gap-3">
-                          <WorkspaceAction icon={<Mail size={18} />} label="Send Follow-up" />
-                          <WorkspaceAction icon={<Calendar size={18} />} label="Log Interview" />
-                          <WorkspaceAction icon={<History size={18} />} label="View History" />
-                          <WorkspaceAction icon={<Plus size={18} />} label="Add Document" />
+                          <WorkspaceAction 
+                            icon={<Calendar size={18} />} 
+                            label="Save to Calendar" 
+                            onClick={handleSyncToCalendar}
+                            loading={calendarLoading}
+                            successText={calendarSuccess}
+                          />
+                          <WorkspaceAction 
+                            icon={<CheckSquare size={18} />} 
+                            label="Save to Google Tasks" 
+                            onClick={handleSyncToTasks}
+                            loading={tasksLoading}
+                            successText={tasksSuccess}
+                          />
+                          <WorkspaceAction icon={<Mail size={18} />} label="Scan Gmail updates" onClick={fetchGmailUpdates} />
                         </div>
                       </section>
+
+                      <Placard className="p-6 space-y-4 border-[var(--sys-color-outline-variant)] bg-[var(--sys-color-charcoalBackground-steps-2)]">
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-[10px] font-bold text-[var(--sys-color-worker-ash-base)] uppercase tracking-[0.2em]">Gmail Correspondence</h3>
+                          <M3Button 
+                            variant="text" 
+                            className="text-xs h-6 px-2 text-[var(--sys-color-inkGold-base)] hover:bg-transparent font-bold"
+                            onClick={fetchGmailUpdates}
+                            disabled={gmailLoading}
+                          >
+                            {gmailLoading ? "Scanning..." : "Scan Inbox"}
+                          </M3Button>
+                        </div>
+                        <div className="space-y-3">
+                          {gmailError ? (
+                            <div className="text-center py-4 space-y-2">
+                              <p className="text-xs text-[var(--sys-color-worker-ash-base)] italic">{gmailError}</p>
+                              {gmailError.includes("Required") && (
+                                <M3Button variant="tonal" className="scale-75 font-bold bg-[var(--sys-color-inkGold-base)] text-black" onClick={connectGoogle}>
+                                  Connect Google
+                                </M3Button>
+                              )}
+                            </div>
+                          ) : emails.length > 0 ? (
+                            emails.map(email => (
+                              <div key={email.id} className="p-3 bg-[var(--sys-color-charcoalBackground-steps-3)] border border-[var(--sys-color-outline-variant)] rounded-xl space-y-1 transition-all hover:bg-[var(--sys-color-charcoalBackground-steps-4)]">
+                                <div className="flex justify-between items-start gap-2">
+                                  <span className="text-xs font-bold text-[var(--sys-color-paperWhite-base)] truncate max-w-[150px]">{email.subject}</span>
+                                  <span className="text-[8px] font-mono text-[var(--sys-color-worker-ash-base)] shrink-0">{new Date(email.date).toLocaleDateString()}</span>
+                                </div>
+                                <p className="text-[9px] font-mono font-bold text-[var(--sys-color-worker-ash-base)] truncate">From: {email.from}</p>
+                                <p className="text-[10px] text-[var(--sys-color-worker-ash-base)] line-clamp-2 mt-1 leading-normal">{email.snippet}</p>
+                              </div>
+                            ))
+                          ) : (
+                            <p className="text-xs text-[var(--sys-color-worker-ash-base)] italic text-center py-4 font-medium leading-relaxed">
+                              No recent application emails listed. Click 'Scan Inbox' to fetch live Google mail updates.
+                            </p>
+                          )}
+                        </div>
+                      </Placard>
                       
                       <Placard className="p-8 border-[var(--sys-color-inkGold-base)]/20 bg-gradient-to-br from-[var(--sys-color-inkGold-base)]/10 to-transparent relative overflow-hidden group">
                         <div className="absolute -top-4 -right-4 w-24 h-24 bg-[var(--sys-color-inkGold-base)]/10 rounded-full blur-2xl group-hover:scale-150 transition-transform duration-700" />
@@ -255,14 +423,39 @@ export function PastApplicationsReference() {
   );
 }
 
-function WorkspaceAction({ icon, label }: { icon: React.ReactNode, label: string }) {
+function WorkspaceAction({ 
+  icon, 
+  label, 
+  onClick, 
+  disabled, 
+  loading, 
+  successText 
+}: { 
+  icon: React.ReactNode; 
+  label: string; 
+  onClick?: () => void; 
+  disabled?: boolean;
+  loading?: boolean;
+  successText?: string | null;
+}) {
   return (
-    <M3Button variant="outlined" className="w-full justify-between group h-12 px-4 border-[var(--sys-color-outline-variant)] hover:border-[var(--sys-color-worker-ash-base)]">
+    <M3Button 
+      variant="outlined" 
+      onClick={onClick}
+      disabled={disabled || loading}
+      className={`w-full justify-between group h-12 px-4 border-[var(--sys-color-outline-variant)] ${loading ? 'opacity-70' : 'hover:border-[var(--sys-color-worker-ash-base)]'}`}
+    >
       <div className="flex items-center gap-4">
-        <div className="text-[var(--sys-color-worker-ash-base)] group-hover:text-[var(--sys-color-paperWhite-base)] transition-colors">
-          {icon}
-        </div>
-        <span className="text-xs font-bold text-[var(--sys-color-worker-ash-base)] group-hover:text-[var(--sys-color-paperWhite-base)] uppercase tracking-widest transition-colors">{label}</span>
+        {loading ? (
+          <Loader2 size={16} className="animate-spin text-[var(--sys-color-inkGold-base)]" />
+        ) : (
+          <div className="text-[var(--sys-color-worker-ash-base)] group-hover:text-[var(--sys-color-paperWhite-base)] transition-colors">
+            {icon}
+          </div>
+        )}
+        <span className="text-[10px] font-bold text-[var(--sys-color-worker-ash-base)] group-hover:text-[var(--sys-color-paperWhite-base)] uppercase tracking-widest transition-colors">
+          {successText ? successText : label}
+        </span>
       </div>
       <ChevronRight size={16} className="text-[var(--sys-color-worker-ash-base)] opacity-0 group-hover:opacity-100 transition-all -translate-x-2 group-hover:translate-x-0" />
     </M3Button>

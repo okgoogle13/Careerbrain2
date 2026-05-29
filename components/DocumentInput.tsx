@@ -7,10 +7,11 @@ import { motion, AnimatePresence } from 'motion/react';
 import { UploadIcon } from './icons/UploadIcon';
 import { FileIcon } from './icons/FileIcon';
 import { TrashIcon } from './icons/TrashIcon';
-import { CheckCircle2, AlertCircle, FileText, FileCode, FileType } from 'lucide-react';
+import { CheckCircle2, AlertCircle, FileText, FileCode, FileType, Search, Loader2 } from 'lucide-react';
 import { M3Button } from '../src/components/ui/M3Button';
 import { M3Card } from '../src/components/ui/M3Card';
 import { M3Type } from '../src/theme/typography';
+import { CustomDrivePicker } from '../src/components/feature/CustomDrivePicker';
 
 interface DocumentInputProps {
   onProcess: (files: File[], rawText?: string, fileData?: { data: string; mimeType: string }[]) => void;
@@ -40,6 +41,41 @@ export const DocumentInput: React.FC<DocumentInputProps> = ({ onProcess, isLoadi
   const [error, setError] = useState<string | null>(null);
   const [isReading, setIsReading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  const [showDrivePicker, setShowDrivePicker] = useState(false);
+  const [driveLoading, setDriveLoading] = useState(false);
+
+  const handleDriveFileSelect = async (file: any) => {
+    setShowDrivePicker(false);
+    setDriveLoading(true);
+    setError(null);
+    try {
+      const tokens = JSON.parse(localStorage.getItem('google_tokens') || 'null');
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+      if (tokens) {
+        headers['Authorization'] = `Bearer ${JSON.stringify(tokens)}`;
+      }
+
+      const res = await fetch("/api/drive/file", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ fileId: file.id, mimeType: file.mimeType })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setRawText(data.content);
+        if (onRawTextChange) {
+          onRawTextChange(data.content);
+        }
+      } else {
+        throw new Error(data.error || "Failed to download Google Drive document.");
+      }
+    } catch (err: any) {
+      setError(err.message || "Error fetching file from Google Drive.");
+    } finally {
+      setDriveLoading(false);
+    }
+  };
 
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newText = e.target.value;
@@ -181,9 +217,23 @@ export const DocumentInput: React.FC<DocumentInputProps> = ({ onProcess, isLoadi
   return (
     <M3Card variant="elevated" className="p-10 border-l-4 border-l-[var(--sys-color-solidarityRed-base)] my-8 mx-auto max-w-6xl">
       {!hideTitle && <h2 style={{ ...M3Type.headlineSmall, color: 'var(--sys-color-paperWhite-base)' }} className="mb-4 tracking-tight">1. Upload Your Career Documents</h2>}
-      <div className="flex gap-2 mb-8">
-        <span className="px-3 py-1 bg-[var(--sys-color-charcoalBackground-steps-2)] text-[var(--sys-color-worker-ash-base)] text-sm font-bold uppercase tracking-wider rounded-full border border-[var(--sys-color-outline-variant)]">Up to {MAX_FILES} documents</span>
-        <span className="px-3 py-1 bg-[var(--sys-color-charcoalBackground-steps-2)] text-[var(--sys-color-worker-ash-base)] text-sm font-bold uppercase tracking-wider rounded-full border border-[var(--sys-color-outline-variant)]">PDF · DOCX · TXT</span>
+      <div className="flex flex-col sm:flex-row flex-wrap gap-4 mb-8 justify-between items-start sm:items-center">
+        <div className="flex flex-wrap gap-2">
+          <span className="px-3 py-1 bg-[var(--sys-color-charcoalBackground-steps-2)] text-[var(--sys-color-worker-ash-base)] text-sm font-bold uppercase tracking-wider rounded-full border border-[var(--sys-color-outline-variant)]">Up to {MAX_FILES} documents</span>
+          <span className="px-3 py-1 bg-[var(--sys-color-charcoalBackground-steps-2)] text-[var(--sys-color-worker-ash-base)] text-sm font-bold uppercase tracking-wider rounded-full border border-[var(--sys-color-outline-variant)]">PDF · DOCX · TXT</span>
+        </div>
+        <M3Button 
+          type="button"
+          variant="tonal" 
+          onClick={() => setShowDrivePicker(true)}
+          className="h-10 px-4 bg-[var(--sys-color-inkGold-base)]/10 text-[var(--sys-color-inkGold-base)] border border-[var(--sys-color-inkGold-base)]/30 hover:bg-[var(--sys-color-inkGold-base)]/20 hover:scale-[1.02] flex items-center gap-2 font-bold uppercase text-xs tracking-wider"
+          disabled={isLoading || isReading || driveLoading}
+        >
+          <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
+            <path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46.2 14.25 0 14 0h-4c-.25 0-.46.2-.49.44l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.44.49.44h4c.25 0 .46-.2.49-.44l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
+          </svg>
+          Browse Google Drive
+        </M3Button>
       </div>
       <form onSubmit={handleSubmit}>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -295,6 +345,20 @@ export const DocumentInput: React.FC<DocumentInputProps> = ({ onProcess, isLoadi
           </AnimatePresence>
         </div>
       </form>
+      
+      {driveLoading && (
+        <div className="absolute inset-0 bg-black/60 z-50 flex flex-col items-center justify-center p-4 rounded-3xl">
+          <Loader2 size={32} className="animate-spin text-[var(--sys-color-inkGold-base)] mb-4" />
+          <p className="text-[var(--sys-color-paperWhite-base)] font-mono text-xs uppercase tracking-widest">Fetching file from Google Drive...</p>
+        </div>
+      )}
+
+      {showDrivePicker && (
+        <CustomDrivePicker 
+          onClose={() => setShowDrivePicker(false)}
+          onFileSelect={handleDriveFileSelect}
+        />
+      )}
     </M3Card>
   );
 };

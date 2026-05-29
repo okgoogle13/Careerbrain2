@@ -28,16 +28,35 @@ async function startServer() {
     `${process.env.APP_URL}/api/auth/google/callback`
   );
 
+  const getAuthTokens = (req: any) => {
+    if (req.body && req.body.tokens) {
+      return req.body.tokens;
+    }
+    if (req.query && req.query.tokens) {
+      try {
+        return JSON.parse(req.query.tokens as string);
+      } catch (e) {}
+    }
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      try {
+        const tokenStr = authHeader.substring(7);
+        return JSON.parse(tokenStr);
+      } catch (e) {}
+    }
+    return req.session?.tokens;
+  };
+
     // API routes FIRST
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
   });
 
   app.post("/api/sheets/init", async (req, res) => {
-    const { tokens, title } = req.body;
-    const authTokens = tokens || (req as any).session.tokens;
+    const { title } = req.body;
+    const authTokens = getAuthTokens(req);
     
-    if (!authTokens) return res.status(401).json({ error: "Not authenticated" });
+    if (!authTokens) return res.status(401).json({ error: "Not authenticated with Google" });
     oauth2Client.setCredentials(authTokens);
     
     try {
@@ -49,10 +68,10 @@ async function startServer() {
   });
 
   app.post("/api/docs/create", async (req, res) => {
-    const { tokens, title, content } = req.body;
-    const authTokens = tokens || (req as any).session.tokens;
+    const { title, content } = req.body;
+    const authTokens = getAuthTokens(req);
     
-    if (!authTokens) return res.status(401).json({ error: "Not authenticated" });
+    if (!authTokens) return res.status(401).json({ error: "Not authenticated with Google" });
     oauth2Client.setCredentials(authTokens);
     
     try {
@@ -64,8 +83,8 @@ async function startServer() {
   });
 
   app.get("/api/drive/resumes", async (req, res) => {
-    const authTokens = (req as any).session.tokens;
-    if (!authTokens) return res.status(401).json({ error: "Not authenticated" });
+    const authTokens = getAuthTokens(req);
+    if (!authTokens) return res.status(401).json({ error: "Not authenticated with Google" });
     
     oauth2Client.setCredentials(authTokens);
     try {
@@ -78,8 +97,8 @@ async function startServer() {
 
   app.post("/api/drive/file", async (req, res) => {
     const { fileId, mimeType } = req.body;
-    const authTokens = (req as any).session.tokens;
-    if (!authTokens) return res.status(401).json({ error: "Not authenticated" });
+    const authTokens = getAuthTokens(req);
+    if (!authTokens) return res.status(401).json({ error: "Not authenticated with Google" });
     
     oauth2Client.setCredentials(authTokens);
     try {
@@ -98,7 +117,9 @@ async function startServer() {
         'https://www.googleapis.com/auth/userinfo.email',
         'https://www.googleapis.com/auth/spreadsheets',
         'https://www.googleapis.com/auth/documents',
-        'https://www.googleapis.com/auth/drive.readonly'
+        'https://www.googleapis.com/auth/drive.readonly',
+        'https://www.googleapis.com/auth/tasks',
+        'https://www.googleapis.com/auth/gmail.readonly'
       ],
       prompt: 'consent'
     });
@@ -183,6 +204,84 @@ async function startServer() {
     } catch (error) {
       console.error("Error syncing to calendar:", error);
       res.status(500).json({ error: "Failed to sync to calendar" });
+    }
+  });
+
+  app.post("/api/tasks/create", async (req, res) => {
+    const { task } = req.body;
+    const authTokens = getAuthTokens(req);
+
+    if (!authTokens) {
+      return res.status(401).json({ error: "Not authenticated with Google" });
+    }
+
+    try {
+      oauth2Client.setCredentials(authTokens);
+      const tasksClient = google.tasks({ version: 'v1', auth: oauth2Client });
+
+      const { title, notes, due } = task;
+
+      // Ensure the @default list exists and insert task
+      const result = await tasksClient.tasks.insert({
+        tasklist: '@default',
+        requestBody: {
+          title,
+          notes: notes || "Created by CareerCopilot",
+          due: due ? new Date(due).toISOString() : undefined,
+        },
+      });
+
+      res.json({ success: true, taskId: result.data.id });
+    } catch (error) {
+      console.error("Error creating Google Task:", error);
+      res.status(500).json({ error: "Failed to create Google Task" });
+    }
+  });
+
+  app.get("/api/gmail/latest", async (req, res) => {
+    const authTokens = getAuthTokens(req);
+
+    if (!authTokens) {
+      return res.status(401).json({ error: "Not authenticated with Google" });
+    }
+
+    try {
+      oauth2Client.setCredentials(authTokens);
+      const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+      
+      const response = await gmail.users.messages.list({
+        userId: 'me',
+        q: 'subject:(application OR interview OR offer OR resume OR career OR "thank you for applying" OR job)',
+        maxResults: 5
+      });
+      
+      const messages = response.data.messages || [];
+      const details = await Promise.all(messages.map(async (m) => {
+        try {
+          const msg = await gmail.users.messages.get({
+            userId: 'me',
+            id: m.id!
+          });
+          const headers = msg.data.payload?.headers || [];
+          const subject = headers.find(h => h.name?.toLowerCase() === 'subject')?.value || 'No Subject';
+          const from = headers.find(h => h.name?.toLowerCase() === 'from')?.value || 'Unknown Sender';
+          const date = headers.find(h => h.name?.toLowerCase() === 'date')?.value || '';
+          return {
+            id: m.id,
+            snippet: msg.data.snippet || '',
+            subject,
+            from,
+            date
+          };
+        } catch (e) {
+          return { id: m.id, snippet: 'Failed to load details', subject: 'Unknown', from: 'Unknown', date: '' };
+        }
+      }));
+
+      res.json({ emails: details });
+    } catch (error) {
+      console.error("Error listing latest emails:", error);
+      res.status(500).json({ error: "Failed to list emails" });
     }
   });
 

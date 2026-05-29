@@ -21,23 +21,76 @@ export function CustomDrivePicker({ onClose, onFileSelect }: CustomDrivePickerPr
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [unauthorized, setUnauthorized] = useState(false);
 
   useEffect(() => {
     fetchResumes();
   }, []);
 
-  const fetchResumes = async () => {
+  const startOAuthFlow = async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/drive/resumes");
+      const response = await fetch('/api/auth/google/url');
+      if (!response.ok) throw new Error("Could not fetch Auth Google URL from server");
+      const { url } = await response.json();
+      
+      const width = 500;
+      const height = 600;
+      const left = window.screen.width / 2 - width / 2;
+      const top = window.screen.height / 2 - height / 2;
+      
+      const popup = window.open(
+        url,
+        'Google OAuth',
+        `width=${width},height=${height},left=${left},top=${top}`
+      );
+
+      const handleMessage = (event: MessageEvent) => {
+        if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
+          const { tokens } = event.data;
+          localStorage.setItem('google_tokens', JSON.stringify(tokens));
+          setUnauthorized(false);
+          window.removeEventListener('message', handleMessage);
+          fetchResumes();
+        }
+      };
+
+      window.addEventListener('message', handleMessage);
+    } catch (err: any) {
+      console.error("Failed to start Google OAuth flow:", err);
+      setError("Failed to initiate connection. Is Google OAuth configured?");
+      setLoading(false);
+    }
+  };
+
+  const fetchResumes = async () => {
+    setLoading(true);
+    setError(null);
+    setUnauthorized(false);
+    try {
+      const tokens = JSON.parse(localStorage.getItem('google_tokens') || 'null');
+      const headers: HeadersInit = {};
+      if (tokens) {
+        headers['Authorization'] = `Bearer ${JSON.stringify(tokens)}`;
+      }
+
+      const res = await fetch("/api/drive/resumes", { headers });
+      
+      if (res.status === 401) {
+        setUnauthorized(true);
+        throw new Error("unauthorized");
+      }
+      
       if (!res.ok) {
         throw new Error("Failed to load files from Google Drive.");
       }
       const data = await res.json();
-      setFiles(data.files);
+      setFiles(data.files || []);
     } catch (err: any) {
-      setError(err.message);
+      if (err.message !== "unauthorized") {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -81,7 +134,22 @@ export function CustomDrivePicker({ onClose, onFileSelect }: CustomDrivePickerPr
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 space-y-2">
-            {loading ? (
+            {unauthorized ? (
+              <div className="flex flex-col items-center justify-center h-full text-[var(--md-sys-color-on-surface-variant)] text-center px-6">
+                <FileText size={48} className="mb-4 text-[var(--sys-color-inkGold-base)]" />
+                <h3 className="text-xl font-bold mb-2 text-[var(--sys-color-paperWhite-base)]">Google Workspace Required</h3>
+                <p className="text-sm max-w-sm mb-6 text-[var(--sys-color-worker-ash-base)] font-medium">
+                  Connect your Google Drive to browse, search, and import your resumes directly.
+                </p>
+                <M3Button 
+                  variant="filled" 
+                  onClick={startOAuthFlow}
+                  className="bg-[var(--sys-color-inkGold-base)] text-black h-11 px-6 rounded-xl hover:scale-[1.02] transition-transform font-bold"
+                >
+                  Connect Google Drive
+                </M3Button>
+              </div>
+            ) : loading ? (
               <div className="flex flex-col items-center justify-center h-full text-[var(--md-sys-color-on-surface-variant)]">
                 <Loader2 size={32} className="animate-spin mb-4" />
                 <p>Loading files from Google Drive...</p>
