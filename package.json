@@ -26,8 +26,8 @@
     "googleapis": "^171.4.0",
     "html2canvas": "^1.4.1",
     "html2pdf.js": "^0.14.0",
-    "jspdf": "^4.2.0",
-    "lodash": "^4.17.23",
+    "jspdf": "^4.2.1",
+    "lodash": "^4.18.1",
     "lucide-react": "^0.575.0",
     "motion": "^12.34.3",
     "react": "^19.2.0",
@@ -51,6 +51,6 @@
     "esbuild": "^0.28.0",
     "tailwindcss": "^4.2.1",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "vite": "^6.4.2"
   }
 }
